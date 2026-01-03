@@ -1,9 +1,10 @@
 /**
  * @file shared_mutex_vs_mutex_bench.cpp
- * @brief Professional-grade performance comparison between std::mutex and std::shared_mutex.
- * * This benchmark simulates a Single-Writer / Multiple-Reader (SWMR) scenario.
- * It tracks scaling from 2 to 8 threads to demonstrate the throughput
- * advantages of shared locks as the reader-to-writer ratio increases.
+ * @brief Industry-grade performance analysis of std::mutex vs std::shared_mutex.
+ * * DESIGN PRINCIPLE:
+ * This benchmark measures "Throughput Scaling." By increasing threads from 2 to 8,
+ * we observe how the system handles increasing reader pressure against a
+ * single constant writer.
  */
 
 #include <benchmark/benchmark.h>
@@ -15,22 +16,23 @@
 
 /**
  * @struct BenchmarkContext
- * @brief Encapsulates shared resources and ensures cache-line isolation.
- * * alignas(64) prevents "False Sharing," ensuring the mutexes do not
- * inhabit the same CPU cache line.
+ * @brief Isolated data container to prevent "False Sharing."
+ * * False Sharing occurs when two threads modify data on the same cache line.
+ * alignas(64) ensures our mutexes are on separate cache lines, providing
+ * the most accurate "pure" measurement of the locking mechanism itself.
  */
 struct BenchmarkContext
 {
     std::map<int, double> data;
 
-    /// @brief Mutex for exclusive access testing.
+    /// @brief Mutex for exclusive access (pessimistic).
     alignas(64) std::mutex regular_mtx;
 
-    /// @brief Shared mutex for concurrent read testing.
+    /// @brief Mutex for shared access (optimistic).
     alignas(64) std::shared_mutex shared_mtx;
 
     /**
-     * @brief Pre-populates the data map once.
+     * @brief Setup shared data once.
      */
     void setup()
     {
@@ -44,11 +46,12 @@ struct BenchmarkContext
     }
 };
 
-/// @brief Global context for the benchmark threads.
+/// @brief Global context instance for the benchmark.
 static BenchmarkContext g_ctx;
 
 /**
- * @brief Simulates a non-trivial read operation.
+ * @brief Heavy Read Workload.
+ * Simulates real-world data processing (e.g., calculation or parsing).
  */
 void DoHeavyRead()
 {
@@ -61,7 +64,8 @@ void DoHeavyRead()
 }
 
 /**
- * @brief Simulates a data update operation.
+ * @brief Write Workload.
+ * Simulates a state update (e.g., cache invalidation or value update).
  */
 void DoWrite()
 {
@@ -70,8 +74,8 @@ void DoWrite()
 }
 
 /**
- * @brief Benchmark: Regular Mutex with 1 Writer and N-1 Readers.
- * @details Thread 0 is always the writer. All threads are serialized.
+ * @brief Benchmark: Regular Mutex (Mixed Workload).
+ * All threads are serialized. Adding threads increases wait time linearly.
  */
 static void BM_RegularMutex_Mixed(benchmark::State &state)
 {
@@ -81,20 +85,21 @@ static void BM_RegularMutex_Mixed(benchmark::State &state)
         std::lock_guard<std::mutex> lock(g_ctx.regular_mtx);
         if (state.thread_index() == 0)
         {
-            DoWrite();
+            DoWrite(); // 1 Writer
         }
         else
         {
-            DoHeavyRead();
+            DoHeavyRead(); // N-1 Readers
         }
     }
 }
-// Automatically test 2, 4, and 8 threads
+// Incrementally test 2, 4, and 8 threads to show the scaling curve.
 BENCHMARK(BM_RegularMutex_Mixed)->ThreadRange(2, 8)->UseRealTime();
 
 /**
- * @brief Benchmark: Shared Mutex with 1 Writer and N-1 Readers.
- * @details Thread 0 is always the writer (exclusive). Others are readers (shared).
+ * @brief Benchmark: Shared Mutex (Mixed Workload).
+ * Readers run in parallel while the Writer is idle.
+ * Throughput should increase with thread count.
  */
 static void BM_SharedMutex_Mixed(benchmark::State &state)
 {
@@ -103,19 +108,19 @@ static void BM_SharedMutex_Mixed(benchmark::State &state)
     {
         if (state.thread_index() == 0)
         {
-            // Exclusive lock for the single writer
+            // Exclusive lock for the writer
             std::unique_lock<std::shared_mutex> lock(g_ctx.shared_mtx);
             DoWrite();
         }
         else
         {
-            // Shared lock for the multiple readers
+            // Shared lock for all readers
             std::shared_lock<std::shared_mutex> lock(g_ctx.shared_mtx);
             DoHeavyRead();
         }
     }
 }
-// Automatically test 2, 4, and 8 threads
+// Incrementally test 2, 4, and 8 threads to show the scaling curve.
 BENCHMARK(BM_SharedMutex_Mixed)->ThreadRange(2, 8)->UseRealTime();
 
 BENCHMARK_MAIN();
