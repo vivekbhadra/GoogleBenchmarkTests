@@ -1,86 +1,121 @@
-// comparison_shared_vs_regular_mutex_googlebechmark.cpp
-// This code compares the performance of std::mutex and std::shared_mutex
-// for read-heavy workloads using Google Benchmark.
+/**
+ * @file shared_mutex_vs_mutex_bench.cpp
+ * @brief Professional-grade performance comparison between std::mutex and std::shared_mutex.
+ * * This benchmark simulates a Single-Writer / Multiple-Reader (SWMR) scenario.
+ * It tracks scaling from 2 to 8 threads to demonstrate the throughput
+ * advantages of shared locks as the reader-to-writer ratio increases.
+ */
 
-#include <benchmark/benchmark.h> // Main header for Google Benchmark framework
-#include <cmath>                 // For mathematical operations (sin, sqrt)
-#include <map>                   // For our shared data structure
-#include <mutex>                 // For std::mutex and std::lock_guard
-#include <shared_mutex>          // For std::shared_mutex and std::shared_lock
-#include <string>
+#include <benchmark/benchmark.h>
+#include <cmath>
+#include <map>
+#include <mutex>
+#include <shared_mutex>
 #include <vector>
 
-// --- GLOBAL SHARED DATA ---
-// These resources are shared across all benchmark threads.
-std::map<int, double> global_data;
-std::mutex m_mtx;        // Standard mutual exclusion: only 1 thread at a time.
-std::shared_mutex s_mtx; // Read-Write lock: many readers OR 1 writer.
-
-// --- SETUP FUNCTION ---
-// Pre-fills the map with data so that we don't measure the cost of
-// map insertion during the actual timing loops.
-void SetupData()
+/**
+ * @struct BenchmarkContext
+ * @brief Encapsulates shared resources and ensures cache-line isolation.
+ * * alignas(64) prevents "False Sharing," ensuring the mutexes do not
+ * inhabit the same CPU cache line.
+ */
+struct BenchmarkContext
 {
-    // Check if empty to ensure we only populate the map once
-    if (global_data.empty())
+    std::map<int, double> data;
+
+    /// @brief Mutex for exclusive access testing.
+    alignas(64) std::mutex regular_mtx;
+
+    /// @brief Shared mutex for concurrent read testing.
+    alignas(64) std::shared_mutex shared_mtx;
+
+    /**
+     * @brief Pre-populates the data map once.
+     */
+    void setup()
     {
-        for (int i = 0; i < 1000; ++i)
+        if (data.empty())
         {
-            global_data[i] = std::sqrt(i);
+            for (int i = 0; i < 1000; ++i)
+            {
+                data[i] = std::sqrt(i);
+            }
         }
     }
-}
+};
 
-// --- SIMULATED WORKLOAD ---
-// We simulate "real work" (math calculations). Without this, the reading
-// happens so fast that the benchmark only measures lock overhead.
-void DoHeavyRead(benchmark::State &state)
+/// @brief Global context for the benchmark threads.
+static BenchmarkContext g_ctx;
+
+/**
+ * @brief Simulates a non-trivial read operation.
+ */
+void DoHeavyRead()
 {
     double total = 0;
-    // Loop 50 times to create a "heavy" read operation
     for (int i = 0; i < 50; ++i)
     {
-        total += std::sin(global_data[i % 1000]);
+        total += std::sin(g_ctx.data[i % 1000]);
     }
-    // benchmark::DoNotOptimize prevents the compiler from seeing that 'total'
-    // is unused and deleting the entire loop during optimization (-O3).
     benchmark::DoNotOptimize(total);
 }
 
-// --- BENCHMARK 1: REGULAR MUTEX ---
-// This uses the "exclusive" lock. Even if threads only want to read,
-// they must wait for the thread ahead of them to finish.
-static void BM_RegularMutex(benchmark::State &state)
+/**
+ * @brief Simulates a data update operation.
+ */
+void DoWrite()
 {
-    SetupData();
-    // The 'state' loop is managed by Google Benchmark. It runs until it has
-    // collected enough data for a statistically significant result.
+    g_ctx.data[0] += 1.1;
+    benchmark::DoNotOptimize(g_ctx.data[0]);
+}
+
+/**
+ * @brief Benchmark: Regular Mutex with 1 Writer and N-1 Readers.
+ * @details Thread 0 is always the writer. All threads are serialized.
+ */
+static void BM_RegularMutex_Mixed(benchmark::State &state)
+{
+    g_ctx.setup();
     for (auto _ : state)
     {
-        // lock_guard locks the mutex on creation and unlocks when it goes out of scope.
-        std::lock_guard<std::mutex> lock(m_mtx);
-        DoHeavyRead(state);
+        std::lock_guard<std::mutex> lock(g_ctx.regular_mtx);
+        if (state.thread_index() == 0)
+        {
+            DoWrite();
+        }
+        else
+        {
+            DoHeavyRead();
+        }
     }
 }
-// Registers the benchmark. ThreadRange(1, 8) tells it to run this test
-// with 1, 2, 4, and 8 concurrent threads. UseRealTime() shows wall-clock time.
-BENCHMARK(BM_RegularMutex)->ThreadRange(1, 8)->UseRealTime();
+// Automatically test 2, 4, and 8 threads
+BENCHMARK(BM_RegularMutex_Mixed)->ThreadRange(2, 8)->UseRealTime();
 
-// --- BENCHMARK 2: SHARED MUTEX ---
-// This uses the "shared" lock. Multiple threads can enter this section
-// simultaneously as long as no writer is holding the lock.
-static void BM_SharedMutex(benchmark::State &state)
+/**
+ * @brief Benchmark: Shared Mutex with 1 Writer and N-1 Readers.
+ * @details Thread 0 is always the writer (exclusive). Others are readers (shared).
+ */
+static void BM_SharedMutex_Mixed(benchmark::State &state)
 {
-    SetupData();
+    g_ctx.setup();
     for (auto _ : state)
     {
-        // shared_lock allows other threads using shared_lock to access
-        // this section at the same time.
-        std::shared_lock<std::shared_mutex> lock(s_mtx);
-        DoHeavyRead(state);
+        if (state.thread_index() == 0)
+        {
+            // Exclusive lock for the single writer
+            std::unique_lock<std::shared_mutex> lock(g_ctx.shared_mtx);
+            DoWrite();
+        }
+        else
+        {
+            // Shared lock for the multiple readers
+            std::shared_lock<std::shared_mutex> lock(g_ctx.shared_mtx);
+            DoHeavyRead();
+        }
     }
 }
-BENCHMARK(BM_SharedMutex)->ThreadRange(1, 8)->UseRealTime();
+// Automatically test 2, 4, and 8 threads
+BENCHMARK(BM_SharedMutex_Mixed)->ThreadRange(2, 8)->UseRealTime();
 
-// This macro creates the main() function and handles all command-line arguments.
 BENCHMARK_MAIN();
