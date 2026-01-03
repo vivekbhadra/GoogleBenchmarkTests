@@ -10,7 +10,7 @@ Easy integration with CI/CD pipelines for automated performance testing.
 
 ## Compilation Instructions 
 ```
-g++ comparison_shared_vs_regular_mutex_googlebechmark.cpp -O3 -lbenchmark -lpthread -o comparison_shared_vs_regular_mutex_googlebechmark  
+g++ shared_mutex_vs_mutex_bench.cpp -O3 -lbenchmark -lpthread -o shared_mutex_vs_mutex_bench  
 ```
 
 
