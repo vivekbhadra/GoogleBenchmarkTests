@@ -11,6 +11,7 @@ Easy integration with CI/CD pipelines for automated performance testing.
 ## Compilation Instructions 
 ```
 g++ shared_mutex_vs_mutex_bench.cpp -O3 -lbenchmark -lpthread -o shared_mutex_vs_mutex_bench  
+g++ shared_mutex_vs_mutex_bench_light_read.cpp -O3 -lbenchmark -lpthread -o shared_mutex_vs_mutex_bench_light_read
 ```
 
 
