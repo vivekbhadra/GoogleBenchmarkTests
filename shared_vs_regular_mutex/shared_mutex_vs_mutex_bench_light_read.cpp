@@ -51,8 +51,7 @@ static BenchmarkContext g_ctx;
 
 /**
  * @brief EXTREMELY LIGHT Read Workload.
- * This is the only functional change to the logic: 
- * we perform a single lookup instead of 50 trig calculations.
+ * Perform a single lookup instead of 50 trig calculations.
  */
 void DoLightRead()
 {
